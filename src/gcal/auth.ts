@@ -168,6 +168,7 @@ export async function refreshAccessToken(
 		client_id: clientId,
 		refresh_token: refreshToken,
 		grant_type: 'refresh_token',
+		client_secret: clientSecret,
 	});
 
 	let resp;
