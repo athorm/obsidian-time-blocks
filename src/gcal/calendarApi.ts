@@ -146,6 +146,7 @@ export async function listEvents(
 			singleEvents: 'true', // Expand recurring events
 			maxResults: '250',
 			orderBy: 'startTime',
+			colorRgbFormat: 'true', // Return per-event colors as hex strings
 		};
 		if (pageToken) params.pageToken = pageToken;
 

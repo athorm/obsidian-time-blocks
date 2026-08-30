@@ -20,10 +20,14 @@ import type { TimeBlockSettings } from '../settings';
  * - Cancelled events (`status === 'cancelled'`) are skipped.
  * - IDs are namespaced with `api::<calendarId>::<eventId>` to avoid collisions
  *   with events sourced from ICS feeds.
+ * - Colors: the event's own `backgroundColor` wins; otherwise the calendar's
+ *   default `calendarColor` is used; otherwise the field is left undefined so
+ *   the renderer can fall back to the plugin setting.
  */
 export function mapApiEventsToGCalEvents(
 	events: GoogleCalendarEvent[],
-	calendarId: string
+	calendarId: string,
+	calendarColor?: string
 ): GCalEvent[] {
 	const result: GCalEvent[] = [];
 
@@ -39,6 +43,7 @@ export function mapApiEventsToGCalEvents(
 			isAllDay: false,
 			description: event.description || undefined,
 			location: event.location || undefined,
+			color: event.backgroundColor ?? calendarColor,
 		});
 	}
 

@@ -114,6 +114,38 @@ describe('mapApiEventsToGCalEvents', () => {
 		expect(result[1].description).toBeUndefined();
 		expect(result[1].location).toBeUndefined();
 	});
+
+	it('uses the event color when present', () => {
+		const events = [
+			makeApiEvent({ backgroundColor: '#ff0000', colorId: '9' }),
+		];
+
+		const result = mapApiEventsToGCalEvents(events, 'cal-1');
+		expect(result[0].color).toBe('#ff0000');
+	});
+
+	it('falls back to the calendar color when the event has none', () => {
+		const events = [makeApiEvent()];
+
+		const result = mapApiEventsToGCalEvents(events, 'cal-1', '#00ff00');
+		expect(result[0].color).toBe('#00ff00');
+	});
+
+	it('leaves color undefined when neither event nor calendar has one', () => {
+		const events = [makeApiEvent()];
+
+		const result = mapApiEventsToGCalEvents(events, 'cal-1');
+		expect(result[0].color).toBeUndefined();
+	});
+
+	it('prefers the event color over the calendar color', () => {
+		const events = [
+			makeApiEvent({ backgroundColor: '#ff0000', colorId: '9' }),
+		];
+
+		const result = mapApiEventsToGCalEvents(events, 'cal-1', '#00ff00');
+		expect(result[0].color).toBe('#ff0000');
+	});
 });
 
 describe('shouldFetchApiCalendars', () => {

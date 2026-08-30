@@ -41,7 +41,7 @@ export interface TaskItem {
 	rawText: string;
 }
 
-/** A calendar event parsed from an ICS feed. */
+/** A calendar event parsed from an ICS feed or the Google Calendar API. */
 export interface GCalEvent {
 	id: string;
 	title: string;
@@ -50,6 +50,12 @@ export interface GCalEvent {
 	isAllDay: boolean;
 	description?: string;
 	location?: string;
+	/**
+	 * Hex background color mirroring Google Calendar. Set from the event's own
+	 * color, falling back to the calendar's default color. Undefined for ICS
+	 * feeds (they don't carry color reliably).
+	 */
+	color?: string;
 }
 
 /** Re-export sync-related types for convenience. */

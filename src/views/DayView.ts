@@ -10,7 +10,7 @@ import TimeBlockPlugin from '../main';
 import { calendarFeedLabel, TimeBlockSettings } from '../settings';
 import { GCalEvent, ScheduledBlock, TaskItem } from '../types';
 import { parseICS } from '../utils/icsParser';
-import { listEvents } from '../gcal/calendarApi';
+import { listCalendars, listEvents } from '../gcal/calendarApi';
 import {
 	mapApiEventsToGCalEvents,
 	shouldFetchApiCalendars,
@@ -176,6 +176,9 @@ export class DayView extends ItemView {
 			const timeMin = dayStart.toISOString();
 			const timeMax = dayEnd.toISOString();
 
+			// Calendar colors, used as fallback for events without a color.
+			const calendarColors = await this.loadCalendarColors();
+
 			const apiResults = await Promise.all(
 				selectedCalendarIds.map(async (calendarId) => {
 					try {
@@ -185,7 +188,11 @@ export class DayView extends ItemView {
 							timeMin,
 							timeMax
 						);
-						return mapApiEventsToGCalEvents(events, calendarId);
+						return mapApiEventsToGCalEvents(
+							events,
+							calendarId,
+							calendarColors.get(calendarId)
+						);
 					} catch (err) {
 						console.error(
 							`[Time Blocks] Google Calendar API fetch failed for ${calendarId}:`,
@@ -202,6 +209,26 @@ export class DayView extends ItemView {
 		}
 
 		this.gcalEvents = results.flat();
+	}
+
+	/**
+	 * Builds a map of calendar ID -> default background color. Used as a
+	 * fallback for events without an explicit per-event color. Gracefully
+	 * returns an empty map if the calendar list can't be fetched.
+	 */
+	private async loadCalendarColors(): Promise<Map<string, string | undefined>> {
+		const colors = new Map<string, string | undefined>();
+		try {
+			const calendars = await listCalendars(this.plugin.buildApiCallbacks());
+			for (const cal of calendars) {
+				colors.set(cal.id, cal.backgroundColor);
+				// The 'primary' alias resolves to the user's main calendar.
+				if (cal.primary) colors.set('primary', cal.backgroundColor);
+			}
+		} catch (err) {
+			console.error('[Time Blocks] Failed to fetch calendar colors:', err);
+		}
+		return colors;
 	}
 
 	// ── Top-level rendering ────────────────────────────────────────────────────
@@ -476,7 +503,7 @@ export class DayView extends ItemView {
 				startHour: event.start.getHours(),
 				startMinute: event.start.getMinutes(),
 				duration: durationMins,
-				color: this.plugin.settings.gcalEventColor,
+				color: event.color ?? this.plugin.settings.gcalEventColor,
 				source: 'gcal',
 			};
 			this.renderBlock(gcalBlock, workdayStart, workdayEnd);
