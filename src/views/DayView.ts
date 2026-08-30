@@ -74,6 +74,7 @@ export class DayView extends ItemView {
 	// ── Lifecycle ──────────────────────────────────────────────────────────────
 
 	async onOpen(): Promise<void> {
+		this.plugin.currentWeekStart = formatDate(getWeekStartForDay(this.selectedDay));
 		this.render();
 		await this.refresh();
 	}
@@ -250,6 +251,7 @@ export class DayView extends ItemView {
 		todayBtn.addEventListener('click', () => {
 			this.selectedDay = new Date();
 			this.selectedDay.setHours(0, 0, 0, 0);
+			this.plugin.currentWeekStart = formatDate(getWeekStartForDay(this.selectedDay));
 			this.render();
 			void this.refresh();
 		});
@@ -266,6 +268,7 @@ export class DayView extends ItemView {
 		const d = new Date(this.selectedDay);
 		d.setDate(d.getDate() + delta);
 		this.selectedDay = d;
+		this.plugin.currentWeekStart = formatDate(getWeekStartForDay(this.selectedDay));
 		this.render();
 		void this.refresh();
 	}

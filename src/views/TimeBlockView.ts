@@ -88,8 +88,11 @@ export class TimeBlockView extends ItemView {
 	// ── Lifecycle ──────────────────────────────────────────────────────────────
 
 	async onOpen(): Promise<void> {
+		this.plugin.currentWeekStart = formatDate(this.weekStart);
 		this.render();
 		await this.refresh();
+		// Pull remote changes in the background so the UI stays in sync.
+		void this.triggerSync(true);
 	}
 
 	async onClose(): Promise<void> {
@@ -106,10 +109,13 @@ export class TimeBlockView extends ItemView {
 		this.renderBlocks();
 	}
 
-	/** Triggers a two-way sync with Google Calendar for the current week. */
-	async triggerSync(): Promise<void> {
+	/**
+	 * Triggers a two-way sync with Google Calendar for the current week.
+	 * When `silent` is true, user-facing Notices are suppressed (auto-sync).
+	 */
+	async triggerSync(silent = false): Promise<void> {
 		const weekKey = formatDate(this.weekStart);
-		await this.plugin.syncWeek(weekKey);
+		await this.plugin.syncWeek(weekKey, silent);
 		// Refresh the UI to reflect any changes from the sync
 		await this.refresh();
 	}
@@ -699,6 +705,7 @@ export class TimeBlockView extends ItemView {
 		const todayBtn = nav.createEl('button', { cls: 'tb-nav-btn', text: 'Today' });
 		todayBtn.addEventListener('click', () => {
 			this.weekStart = getWeekStart(new Date());
+			this.plugin.currentWeekStart = formatDate(this.weekStart);
 			this.render();
 			void this.refresh();
 		});
@@ -727,6 +734,7 @@ export class TimeBlockView extends ItemView {
 
 	private navigateWeek(delta: number): void {
 		this.weekStart = addWeeks(this.weekStart, delta);
+		this.plugin.currentWeekStart = formatDate(this.weekStart);
 		this.render();
 		void this.refresh();
 	}

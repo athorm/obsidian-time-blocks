@@ -207,3 +207,91 @@ describe('exchangeCodeForTokens / token endpoint error handling', () => {
 		).rejects.toThrow('invalid_client');
 	});
 });
+
+describe('refreshAccessToken', () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it('includes client_secret in the refresh request body', async () => {
+		const obsidianModule = await import('obsidian');
+		const refreshSpy = vi.spyOn(obsidianModule, 'requestUrl').mockResolvedValueOnce({
+			json: {
+				access_token: 'new-access-token',
+				expires_in: 3600,
+				token_type: 'Bearer',
+				scope: 'calendar',
+			},
+			status: 200,
+			text: '',
+			arrayBuffer: new ArrayBuffer(0),
+			headers: {},
+		});
+
+		const { refreshAccessToken } = await import('../../src/gcal/auth');
+		const tokens = await refreshAccessToken(
+			'test-client-id',
+			'test-client-secret',
+			'refresh-token-123'
+		);
+
+		expect(refreshSpy).toHaveBeenCalledTimes(1);
+		const body = refreshSpy.mock.calls[0][0]?.body as string;
+		expect(body).toContain('client_id=test-client-id');
+		expect(body).toContain('client_secret=test-client-secret');
+		expect(body).toContain('refresh_token=refresh-token-123');
+		expect(body).toContain('grant_type=refresh_token');
+		expect(tokens.access_token).toBe('new-access-token');
+	});
+
+	it('preserves the original refresh token when the server does not rotate it', async () => {
+		const obsidianModule = await import('obsidian');
+		vi.spyOn(obsidianModule, 'requestUrl').mockResolvedValueOnce({
+			json: {
+				access_token: 'new-access-token',
+				expires_in: 3600,
+				token_type: 'Bearer',
+				scope: 'calendar',
+			},
+			status: 200,
+			text: '',
+			arrayBuffer: new ArrayBuffer(0),
+			headers: {},
+		});
+
+		const { refreshAccessToken } = await import('../../src/gcal/auth');
+		const tokens = await refreshAccessToken(
+			'test-client-id',
+			'test-client-secret',
+			'refresh-token-123'
+		);
+
+		expect(tokens.refresh_token).toBe('refresh-token-123');
+	});
+
+	it('keeps a rotated refresh token issued by the server', async () => {
+		const obsidianModule = await import('obsidian');
+		vi.spyOn(obsidianModule, 'requestUrl').mockResolvedValueOnce({
+			json: {
+				access_token: 'new-access-token',
+				refresh_token: 'rotated-refresh-token',
+				expires_in: 3600,
+				token_type: 'Bearer',
+				scope: 'calendar',
+			},
+			status: 200,
+			text: '',
+			arrayBuffer: new ArrayBuffer(0),
+			headers: {},
+		});
+
+		const { refreshAccessToken } = await import('../../src/gcal/auth');
+		const tokens = await refreshAccessToken(
+			'test-client-id',
+			'test-client-secret',
+			'refresh-token-123'
+		);
+
+		expect(tokens.refresh_token).toBe('rotated-refresh-token');
+	});
+});
