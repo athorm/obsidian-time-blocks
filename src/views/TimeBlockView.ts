@@ -10,6 +10,11 @@ import TimeBlockPlugin from '../main';
 import { calendarFeedLabel, TimeBlockSettings } from '../settings';
 import { GCalEvent, ScheduledBlock, TaskItem } from '../types';
 import { parseICS } from '../utils/icsParser';
+import { listCalendars, listEvents } from '../gcal/calendarApi';
+import {
+	mapApiEventsToGCalEvents,
+	shouldFetchApiCalendars,
+} from '../gcal/eventMapper';
 import { applyQuery, parseQuery } from '../utils/queryFilter';
 import { queryTasks, scanAllTasks, setTaskCompletion, clearTaskScheduledDate } from '../utils/taskQuery';
 import {
@@ -83,8 +88,11 @@ export class TimeBlockView extends ItemView {
 	// ── Lifecycle ──────────────────────────────────────────────────────────────
 
 	async onOpen(): Promise<void> {
+		this.plugin.currentWeekStart = formatDate(this.weekStart);
 		this.render();
 		await this.refresh();
+		// Pull remote changes in the background so the UI stays in sync.
+		void this.triggerSync(true);
 	}
 
 	async onClose(): Promise<void> {
@@ -101,10 +109,13 @@ export class TimeBlockView extends ItemView {
 		this.renderBlocks();
 	}
 
-	/** Triggers a two-way sync with Google Calendar for the current week. */
-	async triggerSync(): Promise<void> {
+	/**
+	 * Triggers a two-way sync with Google Calendar for the current week.
+	 * When `silent` is true, user-facing Notices are suppressed (auto-sync).
+	 */
+	async triggerSync(silent = false): Promise<void> {
 		const weekKey = formatDate(this.weekStart);
-		await this.plugin.syncWeek(weekKey);
+		await this.plugin.syncWeek(weekKey, silent);
 		// Refresh the UI to reflect any changes from the sync
 		await this.refresh();
 	}
@@ -144,50 +155,115 @@ export class TimeBlockView extends ItemView {
 	}
 
 	private async loadGCalEvents(): Promise<void> {
-		const feeds = this.plugin.settings.calendarFeeds;
+		const { calendarFeeds, oauthTokens, selectedCalendarIds } =
+			this.plugin.settings;
 		this.gcalEvents = [];
 
-		if (feeds.length === 0) return;
+		const results: GCalEvent[][] = [];
 
-		const results = await Promise.all(
-			feeds.map(async (feed, index) => {
-				const url = feed.url.trim();
-				if (!url) return [];
+		// ── ICS calendar feeds ────────────────────────────────────────────────
+		if (calendarFeeds.length > 0) {
+			const feedResults = await Promise.all(
+				calendarFeeds.map(async (feed, index) => {
+					const url = feed.url.trim();
+					if (!url) return [];
 
-				const label = calendarFeedLabel(index);
+					const label = calendarFeedLabel(index);
 
-				// Security: only allow HTTPS URLs to prevent accidental fetches to
-				// local-network or non-encrypted endpoints.
-				if (!url.startsWith('https://')) {
-					console.warn(
-						`[Time Blocks] ${label} URL rejected: only HTTPS URLs are allowed.`
-					);
-					new Notice(`Time blocks: ${label} URL must use HTTPS.`);
-					return [];
-				}
+					// Security: only allow HTTPS URLs to prevent accidental fetches to
+					// local-network or non-encrypted endpoints.
+					if (!url.startsWith('https://')) {
+						console.warn(
+							`[Time Blocks] ${label} URL rejected: only HTTPS URLs are allowed.`
+						);
+						new Notice(`Time blocks: ${label} URL must use HTTPS.`);
+						return [];
+					}
 
-				try {
-					const resp = await requestUrl({ url, method: 'GET' });
-					const parsed = parseICS(resp.text);
-					// Namespace event IDs to avoid collisions across multiple feeds.
-					// Use "::" as a literal delimiter between encoded feed and event IDs.
-					// To decode, split on "::" and run decodeURIComponent on each part.
-					const feedKey = encodeURIComponent(feed.id);
-					return parsed.map((event) => ({
-						...event,
-						id: `${feedKey}::${encodeURIComponent(event.id)}`,
-					}));
-				} catch (err) {
-					console.error('[Time Blocks] GCal fetch failed:', err);
-					new Notice(
-						`Time blocks: could not fetch ${label}. Check the calendar URL in plugin settings.`
-					);
-					return [];
-				}
-			})
-		);
+					try {
+						const resp = await requestUrl({ url, method: 'GET' });
+						const parsed = parseICS(resp.text);
+						// Namespace event IDs to avoid collisions across multiple feeds.
+						// Use "::" as a literal delimiter between encoded feed and event IDs.
+						// To decode, split on "::" and run decodeURIComponent on each part.
+						const feedKey = encodeURIComponent(feed.id);
+						return parsed.map((event) => ({
+							...event,
+							id: `${feedKey}::${encodeURIComponent(event.id)}`,
+						}));
+					} catch (err) {
+						console.error('[Time Blocks] GCal fetch failed:', err);
+						new Notice(
+							`Time blocks: could not fetch ${label}. Check the calendar URL in plugin settings.`
+						);
+						return [];
+					}
+				})
+			);
+			results.push(...feedResults);
+		}
+
+		// ── Google Calendar API (selected calendars overlay) ─────────────────
+		if (shouldFetchApiCalendars({ oauthTokens, selectedCalendarIds })) {
+			const weekStartDate = new Date(`${formatDate(this.weekStart)}T00:00:00`);
+			const weekEndDate = new Date(weekStartDate);
+			weekEndDate.setDate(weekEndDate.getDate() + 7);
+			const timeMin = weekStartDate.toISOString();
+			const timeMax = weekEndDate.toISOString();
+
+			// Calendar colors, used as fallback for events without a color.
+			const calendarColors = await this.loadCalendarColors();
+
+			const apiResults = await Promise.all(
+				selectedCalendarIds.map(async (calendarId) => {
+					try {
+						const events = await listEvents(
+							this.plugin.buildApiCallbacks(),
+							calendarId,
+							timeMin,
+							timeMax
+						);
+						return mapApiEventsToGCalEvents(
+							events,
+							calendarId,
+							calendarColors.get(calendarId)
+						);
+					} catch (err) {
+						console.error(
+							`[Time Blocks] Google Calendar API fetch failed for ${calendarId}:`,
+							err
+						);
+						new Notice(
+							`Time blocks: could not fetch calendar ${calendarId}. Check your connection.`
+						);
+						return [];
+					}
+				})
+			);
+			results.push(...apiResults);
+		}
 
 		this.gcalEvents = results.flat();
+	}
+
+	/**
+	 * Builds a map of calendar ID -> default background color. Used as a
+	 * fallback for events without an explicit per-event color. Gracefully
+	 * returns an empty map if the calendar list can't be fetched.
+	 */
+	private async loadCalendarColors(): Promise<Map<string, string | undefined>> {
+		const colors = new Map<string, string | undefined>();
+		try {
+			const calendars = await listCalendars(this.plugin.buildApiCallbacks());
+			for (const cal of calendars) {
+				colors.set(cal.id, cal.backgroundColor);
+				// The 'primary' alias resolves to the user's main calendar.
+				if (cal.primary) colors.set('primary', cal.backgroundColor);
+			}
+		} catch (err) {
+			console.error('[Time Blocks] Failed to fetch calendar colors:', err);
+		}
+		return colors;
 	}
 
 	// ── Top-level rendering ────────────────────────────────────────────────────
@@ -656,6 +732,7 @@ export class TimeBlockView extends ItemView {
 		const todayBtn = nav.createEl('button', { cls: 'tb-nav-btn', text: 'Today' });
 		todayBtn.addEventListener('click', () => {
 			this.weekStart = getWeekStart(new Date());
+			this.plugin.currentWeekStart = formatDate(this.weekStart);
 			this.render();
 			void this.refresh();
 		});
@@ -684,6 +761,7 @@ export class TimeBlockView extends ItemView {
 
 	private navigateWeek(delta: number): void {
 		this.weekStart = addWeeks(this.weekStart, delta);
+		this.plugin.currentWeekStart = formatDate(this.weekStart);
 		this.render();
 		void this.refresh();
 	}
@@ -906,7 +984,7 @@ export class TimeBlockView extends ItemView {
 					startHour: event.start.getHours(),
 					startMinute: event.start.getMinutes(),
 					duration: durationMins,
-					color: this.plugin.settings.gcalEventColor,
+					color: event.color ?? this.plugin.settings.gcalEventColor,
 					source: 'gcal',
 				};
 				this.renderBlock(gcalBlock, workdayStart, workdayEnd);

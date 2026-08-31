@@ -10,8 +10,16 @@ import type { OAuthTokens } from './gcal/types';
 import type { CalendarApiCallbacks } from './gcal/calendarApi';
 import { runSync } from './gcal/syncEngine';
 import { ScheduledBlock } from './types';
+import {
+	createDebouncedRunner,
+	shouldAutoSync,
+	type DebouncedRunner,
+} from './utils/autoSync';
 import { TIME_BLOCK_VIEW_TYPE, TimeBlockView } from './views/TimeBlockView';
 import { DAY_VIEW_TYPE, DayView } from './views/DayView';
+
+/** Delay before a block edit triggers an automatic calendar sync. */
+const AUTO_SYNC_DELAY_MS = 3_000;
 
 /** Shape of the unified data.json persisted by this plugin. */
 interface PersistedData {
@@ -29,6 +37,10 @@ export default class TimeBlockPlugin extends Plugin {
 	eventMappings: EventMapping[] = [];
 	/** Guard to prevent concurrent sync operations. */
 	private syncing = false;
+	/** The week currently on screen, used to target auto-sync. */
+	currentWeekStart: string | null = null;
+	/** Debounced auto-sync runner (batches rapid block edits). */
+	private autoSync: DebouncedRunner = createDebouncedRunner(AUTO_SYNC_DELAY_MS);
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
@@ -92,7 +104,7 @@ export default class TimeBlockPlugin extends Plugin {
 	}
 
 	onunload(): void {
-		// No cleanup needed; Obsidian removes views when the plugin is disabled.
+		this.autoSync.cancel();
 	}
 
 	/** Opens (or focuses) the time-block view in a new tab. */
@@ -133,21 +145,29 @@ export default class TimeBlockPlugin extends Plugin {
 				await this.saveSettings();
 			},
 			clientId: this.settings.oauthClientId,
+			clientSecret: this.settings.oauthClientSecret,
 		};
 	}
 
 	/**
 	 * Runs a two-way sync for the given week.
-	 * Called from the view when the user triggers a sync.
+	 * Called from the view when the user triggers a sync (or automatically).
+	 *
+	 * When `silent` is true, user-facing Notices are suppressed (used by
+	 * auto-sync); errors are still logged to the console.
 	 */
-	async syncWeek(weekStart: string): Promise<void> {
+	async syncWeek(weekStart: string, silent = false): Promise<void> {
 		if (!this.settings.enableTwoWaySync) return;
 		if (!this.settings.oauthTokens) {
-			new Notice('Time blocks: sign in to your calendar account first.');
+			if (!silent) {
+				new Notice('Time blocks: sign in to your calendar account first.');
+			}
 			return;
 		}
 		if (this.syncing) {
-			new Notice('Time blocks: sync already in progress.');
+			if (!silent) {
+				new Notice('Time blocks: sync already in progress.');
+			}
 			return;
 		}
 
@@ -169,6 +189,12 @@ export default class TimeBlockPlugin extends Plugin {
 				weekStart
 			);
 
+			if (result.errors.length > 0) {
+				console.error('[Time Blocks] Sync errors:', result.errors);
+			}
+
+			if (silent) return;
+
 			// Summarize
 			const parts: string[] = [];
 			if (result.created > 0) parts.push(`${result.created} created`);
@@ -183,13 +209,25 @@ export default class TimeBlockPlugin extends Plugin {
 				? `Sync complete: ${parts.join(', ')}.`
 				: 'Sync complete: no changes.';
 			new Notice(`Time blocks: ${summary}`);
-
-			if (result.errors.length > 0) {
-				console.error('[Time Blocks] Sync errors:', result.errors);
-			}
 		} finally {
 			this.syncing = false;
 		}
+	}
+
+	/**
+	 * Schedules a debounced auto-sync for the currently-viewed week.
+	 * Called after every block save; rapid edits batch into a single sync.
+	 */
+	private scheduleAutoSync(): void {
+		const weekStart = this.currentWeekStart;
+		if (!shouldAutoSync(
+			this.settings.enableTwoWaySync,
+			!!this.settings.oauthTokens,
+			weekStart
+		)) return;
+		this.autoSync.schedule(() => {
+			if (weekStart) void this.syncWeek(weekStart, true);
+		});
 	}
 
 	// ── Persistence ────────────────────────────────────────────────────────────
@@ -228,6 +266,7 @@ export default class TimeBlockPlugin extends Plugin {
 	/** Saves only the blocks portion (settings are preserved). */
 	async saveBlocks(): Promise<void> {
 		await this.saveData(this.buildPayload());
+		this.scheduleAutoSync();
 	}
 
 	private buildPayload(): PersistedData {

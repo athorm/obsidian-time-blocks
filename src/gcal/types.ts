@@ -49,6 +49,12 @@ export interface GoogleCalendarEvent {
 	end: GoogleDateTime;
 	updated: string; // RFC 3339 timestamp
 	htmlLink?: string;
+	/** Per-event color palette index (1–11). Only set when the event has a color. */
+	colorId?: string;
+	/** Hex background color, returned when `colorRgbFormat=true` is requested. */
+	backgroundColor?: string;
+	/** Hex foreground color, returned when `colorRgbFormat=true` is requested. */
+	foregroundColor?: string;
 }
 
 /** Google Calendar date/time object. */

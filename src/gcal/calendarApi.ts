@@ -28,6 +28,8 @@ export interface CalendarApiCallbacks {
 	saveTokens: (tokens: OAuthTokens) => Promise<void>;
 	/** The Google Cloud Console client ID. */
 	clientId: string;
+	/** The Google Cloud Console client secret **/
+	clientSecret: string;
 }
 
 // ── Token management ──────────────────────────────────────────────────────────
@@ -48,7 +50,7 @@ async function getValidAccessToken(cb: CalendarApiCallbacks): Promise<string> {
 				'Access token expired and no refresh token available. Please sign in again.'
 			);
 		}
-		tokens = await refreshAccessToken(cb.clientId, tokens.refresh_token);
+		tokens = await refreshAccessToken(cb.clientId, cb.clientSecret, tokens.refresh_token);
 		await cb.saveTokens(tokens);
 	}
 
@@ -144,6 +146,7 @@ export async function listEvents(
 			singleEvents: 'true', // Expand recurring events
 			maxResults: '250',
 			orderBy: 'startTime',
+			colorRgbFormat: 'true', // Return per-event colors as hex strings
 		};
 		if (pageToken) params.pageToken = pageToken;
 
