@@ -21,6 +21,9 @@ import { DAY_VIEW_TYPE, DayView } from './views/DayView';
 /** Delay before a block edit triggers an automatic calendar sync. */
 const AUTO_SYNC_DELAY_MS = 3_000;
 
+/** Interval between automatic remote GCal polls (milliseconds). */
+const REMOTE_POLL_INTERVAL_MS = 30_000;
+
 /** Shape of the unified data.json persisted by this plugin. */
 interface PersistedData {
 	version: number;
@@ -101,6 +104,13 @@ export default class TimeBlockPlugin extends Plugin {
 
 		// Settings tab
 		this.addSettingTab(new TimeBlockSettingTab(this.app, this));
+
+		// Periodic remote poll: pulls GCal changes every 30 seconds
+		this.registerInterval(
+			window.setInterval(() => {
+				void this.pollRemoteChanges();
+			}, REMOTE_POLL_INTERVAL_MS)
+		);
 	}
 
 	onunload(): void {
@@ -156,19 +166,19 @@ export default class TimeBlockPlugin extends Plugin {
 	 * When `silent` is true, user-facing Notices are suppressed (used by
 	 * auto-sync); errors are still logged to the console.
 	 */
-	async syncWeek(weekStart: string, silent = false): Promise<void> {
-		if (!this.settings.enableTwoWaySync) return;
+	async syncWeek(weekStart: string, silent = false): Promise<boolean> {
+		if (!this.settings.enableTwoWaySync) return false;
 		if (!this.settings.oauthTokens) {
 			if (!silent) {
 				new Notice('Time blocks: sign in to your calendar account first.');
 			}
-			return;
+			return false;
 		}
 		if (this.syncing) {
 			if (!silent) {
 				new Notice('Time blocks: sync already in progress.');
 			}
-			return;
+			return false;
 		}
 
 		this.syncing = true;
@@ -193,22 +203,26 @@ export default class TimeBlockPlugin extends Plugin {
 				console.error('[Time Blocks] Sync errors:', result.errors);
 			}
 
-			if (silent) return;
+			const hasChanges = result.created > 0 || result.updated > 0 || result.deleted > 0;
 
-			// Summarize
-			const parts: string[] = [];
-			if (result.created > 0) parts.push(`${result.created} created`);
-			if (result.updated > 0) parts.push(`${result.updated} updated`);
-			if (result.deleted > 0) parts.push(`${result.deleted} deleted`);
-			if (result.conflicts.length > 0)
-				parts.push(`${result.conflicts.length} conflicts`);
-			if (result.errors.length > 0)
-				parts.push(`${result.errors.length} errors`);
+			if (!silent) {
+				// Summarize
+				const parts: string[] = [];
+				if (result.created > 0) parts.push(`${result.created} created`);
+				if (result.updated > 0) parts.push(`${result.updated} updated`);
+				if (result.deleted > 0) parts.push(`${result.deleted} deleted`);
+				if (result.conflicts.length > 0)
+					parts.push(`${result.conflicts.length} conflicts`);
+				if (result.errors.length > 0)
+					parts.push(`${result.errors.length} errors`);
 
-			const summary = parts.length > 0
-				? `Sync complete: ${parts.join(', ')}.`
-				: 'Sync complete: no changes.';
-			new Notice(`Time blocks: ${summary}`);
+				const summary = parts.length > 0
+					? `Sync complete: ${parts.join(', ')}.`
+					: 'Sync complete: no changes.';
+				new Notice(`Time blocks: ${summary}`);
+			}
+
+			return hasChanges;
 		} finally {
 			this.syncing = false;
 		}
@@ -226,8 +240,43 @@ export default class TimeBlockPlugin extends Plugin {
 			weekStart
 		)) return;
 		this.autoSync.schedule(() => {
-			if (weekStart) void this.syncWeek(weekStart, true);
+			if (weekStart) {
+				new Notice('Time blocks: auto-syncing calendar…');
+				void this.syncWeek(weekStart, true);
+			}
 		});
+	}
+
+	/**
+	 * Polls Google Calendar for remote changes and refreshes open views
+	 * if any changes were detected. Called by the periodic interval timer.
+	 */
+	private async pollRemoteChanges(): Promise<void> {
+		const weekStart = this.currentWeekStart;
+		if (!shouldAutoSync(
+			this.settings.enableTwoWaySync,
+			!!this.settings.oauthTokens,
+			weekStart
+		)) return;
+
+		const changed = await this.syncWeek(weekStart!, true);
+		if (changed) {
+			this.refreshOpenViews();
+		}
+	}
+
+	/** Triggers a data refresh on all open Time Block and Day views. */
+	private refreshOpenViews(): void {
+		for (const leaf of this.app.workspace.getLeavesOfType(TIME_BLOCK_VIEW_TYPE)) {
+			if (leaf.view instanceof TimeBlockView) {
+				void (leaf.view as TimeBlockView).refresh();
+			}
+		}
+		for (const leaf of this.app.workspace.getLeavesOfType(DAY_VIEW_TYPE)) {
+			if (leaf.view instanceof DayView) {
+				void (leaf.view as DayView).refresh();
+			}
+		}
 	}
 
 	// ── Persistence ────────────────────────────────────────────────────────────
