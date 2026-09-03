@@ -1232,12 +1232,26 @@ export class TimeBlockView extends ItemView {
 }
 
 
-/** Formats a block's start time and duration as a short label, e.g. "9 AM · 30 min". */
+/** Formats a block's start time and duration as a short label, e.g. "9:30 AM - 11 AM". */
 function formatBlockTimeLabel(block: ScheduledBlock): string {
-	const startLabel = block.startMinute > 0
-		? `${formatHour(block.startHour)}:${String(block.startMinute).padStart(2, '0')}`
-		: formatHour(block.startHour);
-	return `${startLabel} · ${block.duration} min`;
+	const formatTime = (h: number, m: number) => {
+		const ampm = h < 12 ? 'AM' : 'PM';
+		const hr = h % 12 || 12;
+		if (m > 0) {
+			return `${hr}:${String(m).padStart(2, '0')} ${ampm}`;
+		}
+		return `${hr} ${ampm}`;
+	};
+
+	const startLabel = formatTime(block.startHour, block.startMinute);
+	
+	const endTotalMinutes = block.startHour * 60 + block.startMinute + block.duration;
+	const endHour = Math.floor(endTotalMinutes / 60) % 24;
+	const endMinute = endTotalMinutes % 60;
+	
+	const endLabel = formatTime(endHour, endMinute);
+
+	return `${startLabel} - ${endLabel}`;
 }
 
 /**
