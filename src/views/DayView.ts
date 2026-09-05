@@ -45,6 +45,10 @@ export class DayView extends ItemView {
 	private navEl!: HTMLElement;
 	private slotsEl!: HTMLElement;
 
+	// Grid range tracking (for detecting settings changes)
+	private lastWorkdayStart = -1;
+	private lastWorkdayEnd = -1;
+
 	// Drag state
 	private draggingTaskId: string | null = null;
 	private draggingBlockId: string | null = null;
@@ -84,6 +88,17 @@ export class DayView extends ItemView {
 	}
 
 	// ── Data loading ───────────────────────────────────────────────────────────
+
+	/** Called when settings change. Rebuilds the grid skeleton if the workday range changed. */
+	onSettingsChanged(): void {
+		if (
+			this.plugin.settings.workdayStart !== this.lastWorkdayStart ||
+			this.plugin.settings.workdayEnd !== this.lastWorkdayEnd
+		) {
+			this.render();
+			this.renderBlocks();
+		}
+	}
 
 	/** Fetches tasks from the vault and GCal events, then re-renders blocks. */
 	async refresh(): Promise<void> {
@@ -244,6 +259,8 @@ export class DayView extends ItemView {
 
 		this.buildDayNav(root);
 		this.buildGrid(root);
+		this.lastWorkdayStart = this.plugin.settings.workdayStart;
+		this.lastWorkdayEnd = this.plugin.settings.workdayEnd;
 	}
 
 	// ── Day navigation ────────────────────────────────────────────────────────

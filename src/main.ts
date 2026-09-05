@@ -310,6 +310,21 @@ export default class TimeBlockPlugin extends Plugin {
 	/** Saves only the settings portion (blocks are preserved). */
 	async saveSettings(): Promise<void> {
 		await this.saveData(this.buildPayload());
+		this.notifySettingsChanged();
+	}
+
+	/** Notifies open views that settings changed, so they can rebuild the grid if needed. */
+	private notifySettingsChanged(): void {
+		for (const leaf of this.app.workspace.getLeavesOfType(TIME_BLOCK_VIEW_TYPE)) {
+			if (leaf.view instanceof TimeBlockView) {
+				(leaf.view as TimeBlockView).onSettingsChanged();
+			}
+		}
+		for (const leaf of this.app.workspace.getLeavesOfType(DAY_VIEW_TYPE)) {
+			if (leaf.view instanceof DayView) {
+				(leaf.view as DayView).onSettingsChanged();
+			}
+		}
 	}
 
 	/** Saves only the blocks portion (settings are preserved). */

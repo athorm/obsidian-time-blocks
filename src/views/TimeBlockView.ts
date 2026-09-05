@@ -60,6 +60,10 @@ export class TimeBlockView extends ItemView {
 	private uiFilterStatus: 'all' | 'open' = 'open';
 	private uiFilterSort: 'default' | 'priority' | 'due' | 'name' = 'default';
 
+	// Grid range tracking (for detecting settings changes)
+	private lastWorkdayStart = -1;
+	private lastWorkdayEnd = -1;
+
 	// Drag state
 	private draggingTaskId: string | null = null;
 	private draggingBlockId: string | null = null;
@@ -100,6 +104,17 @@ export class TimeBlockView extends ItemView {
 	}
 
 	// ── Data loading ───────────────────────────────────────────────────────────
+
+	/** Called when settings change. Rebuilds the grid skeleton if the workday range changed. */
+	onSettingsChanged(): void {
+		if (
+			this.plugin.settings.workdayStart !== this.lastWorkdayStart ||
+			this.plugin.settings.workdayEnd !== this.lastWorkdayEnd
+		) {
+			this.render();
+			this.renderBlocks();
+		}
+	}
 
 	/** Fetches tasks from the vault and GCal events, then re-renders both panels. */
 	async refresh(): Promise<void> {
@@ -285,6 +300,8 @@ export class TimeBlockView extends ItemView {
 		this.buildSidebar();
 		this.buildWeekNav();
 		this.buildGrid();
+		this.lastWorkdayStart = this.plugin.settings.workdayStart;
+		this.lastWorkdayEnd = this.plugin.settings.workdayEnd;
 	}
 
 	/** Attaches mouse-based resize behaviour to the sidebar drag handle. */
